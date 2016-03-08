@@ -2,7 +2,7 @@
 #define DISKMULTIMAP_H_
 
 #include <string>
-#include <vector>
+#include <queue>
 #include "MultiMapTuple.h"
 #include "BinaryFile.h"
 
@@ -14,7 +14,7 @@ public: //DO NOT MAKE ANY CHANGES TO THIS
     {
     public:
         Iterator();
-        Iterator(vector<BinaryFile::Offset> locations, DiskMultiMap* target);
+        Iterator(queue<BinaryFile::Offset> locations, DiskMultiMap* target);
         
         // You may add additional constructors
         
@@ -26,7 +26,7 @@ public: //DO NOT MAKE ANY CHANGES TO THIS
     private:
         // Your private member declarations will go here
         string m_key; 
-        std::vector<BinaryFile::Offset> m_locations;
+        std::queue<BinaryFile::Offset> m_locations;
         int index;
         DiskMultiMap* map;
     };

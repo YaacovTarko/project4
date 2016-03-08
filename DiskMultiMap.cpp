@@ -21,7 +21,7 @@ DiskMultiMap::Iterator::Iterator() {
     map = nullptr; 
 }
 
-DiskMultiMap::Iterator::Iterator(vector<BinaryFile::Offset> locations, DiskMultiMap* target){
+DiskMultiMap::Iterator::Iterator(queue<BinaryFile::Offset> locations, DiskMultiMap* target){
     m_locations = locations;
     index = 0;
     map = target; 
@@ -30,12 +30,12 @@ DiskMultiMap::Iterator::Iterator(vector<BinaryFile::Offset> locations, DiskMulti
 
 
 bool DiskMultiMap::Iterator::isValid() const{
-    return(!m_locations.empty() && index >= 0 && index < m_locations.size() && map != nullptr);
+    return(!m_locations.empty() && map != nullptr);
 }
 
 DiskMultiMap::Iterator& DiskMultiMap::Iterator::operator++(){
     if(!isValid()) return *this;
-    index++;
+    m_locations.pop();
     return *this;
 }
 
@@ -43,7 +43,7 @@ MultiMapTuple DiskMultiMap::Iterator::operator*(){
     MultiMapTuple to_return;
     if(isValid()){
         TableNode gets_data;
-        map->m_map.read(gets_data, m_locations[index]);
+        map->m_map.read(gets_data, m_locations.front());
         
         to_return.key = gets_data.key;
         to_return.value = gets_data.value;
@@ -95,22 +95,6 @@ bool DiskMultiMap::createNew(const std::string& filename, unsigned int numBucket
         current += sizeof(associated_data);
     }
     
-    
-    
-    /*
-     header.site_to_file = current;
-     
-    //I DON'T THINK I EVEN NEED 2 TABLES (BECAUSE BOTH ARE STRINGS AND WE CAN JUST LOOK THRU BOTH OF THEM)
-    
-    //add blank nodes representing the second map (site to file)
-    for(int i = 0; i < numBuckets; i++){
-        
-        //add the link to the bucket to the map
-        m_map.write(associated_data, current);
-        current += sizeof(associated_data);
-
-    }
-    */
     header.empty_slots = -1;  //the section that shows where empty slots are will be added later
     header.end_of_file = current;
     
@@ -244,7 +228,7 @@ bool DiskMultiMap::insert(const std::string& key, const std::string& value, cons
 
 
 DiskMultiMap::Iterator DiskMultiMap::search(const std::string& key){
-    vector<BinaryFile::Offset> iterator_contents;
+    queue<BinaryFile::Offset> iterator_contents;
     
     //finds the proper bucket to check for associated values
     BinaryFile::Offset location = firstNode(key);
@@ -254,7 +238,7 @@ DiskMultiMap::Iterator DiskMultiMap::search(const std::string& key){
     TableNode current;
     while(location != -1){
         m_map.read(current, location);
-        if(current.key == key)   iterator_contents.push_back(location);
+        if(current.key == key)   iterator_contents.push(location);
         location = current.next;
     }
     

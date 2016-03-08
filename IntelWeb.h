@@ -2,6 +2,7 @@
 #define INTELWEB_H_
 
 #include "InteractionTuple.h"
+#include "DiskMultiMap.h"
 #include <string>
 #include <vector>
 
@@ -23,6 +24,9 @@ public:  //DO NOT MAKE CHANGES
     
 private:
     // Your private member declarations will go here
+    DiskMultiMap file_to_site;
+    DiskMultiMap site_to_file;
+    DiskMultiMap file_to_file; 
 };
 
 #endif // INTELWEB_H_
