@@ -82,12 +82,13 @@ bool DiskMultiMap::createNew(const std::string& filename, unsigned int numBucket
     
     //creates the header that will identify different locations in the map
     DiskMultiMap::TableHeader header;
-    header.map_start = sizeof(header);
+    header.key_map = sizeof(header);
     
     //adds blank nodes representing the first map (file to site). -1 BUCKET REPRESENTS UNFILLED BUCKET. WILL BE CHANGED TO VALID NUMBER WHEN SOMETHING IS ADDED
     BinaryFile::Offset associated_data = -1;
-    
     BinaryFile::Offset current = sizeof(header);
+    
+    //adds the nodes representing the map from keys to values
     for(int i = 0; i < numBuckets; i++){
         
         //add the link to the bucket to the map
@@ -95,10 +96,21 @@ bool DiskMultiMap::createNew(const std::string& filename, unsigned int numBucket
         current += sizeof(associated_data);
     }
     
+    header.value_map = current;
+    
+    //adds the nodes representing the map from values to keys
+    for(int i = 0; i < numBuckets; i++){
+        
+        //add the link to the bucket to the map
+        m_map.write(associated_data, current);
+        current += sizeof(associated_data);
+    }
+
+    
     header.empty_slots = -1;  //the section that shows where empty slots are will be added later
     header.end_of_file = current;
     
-    //adds the header to the file yet
+    //adds the header to the file
     m_map.write(header, 0);
     
     this->numBuckets = numBuckets; 
@@ -118,57 +130,67 @@ void DiskMultiMap::close(){
     m_map.close();
     
 }
+
+
 bool DiskMultiMap::insert(const std::string& key, const std::string& value, const std::string& context){
    //makes sure strings aren't too long
     if(key.length() > max_string_size || value.length() > max_string_size || context.length() > max_string_size) return false;
 
     //the final location that the new node will be inserted into shall be stored in this offset
-    BinaryFile::Offset location = -1;
+    BinaryFile::Offset location_to_insert = -1;
     
     //determines if there are empty spaces where a node has been deleted, where this node should be inserted
     TableHeader header;
     m_map.read(header, 0);
     if(header.empty_slots != -1){
+        
         //finds an OffsetNode that stores the location of an empty space, where a TableNode can be inserted
         OffsetNode emptyfinder;
+        OffsetNode onebefore;
         emptyfinder.next = header.empty_slots;
+        onebefore.next = emptyfinder.next;
+        
         while (emptyfinder.next != -1){
-            m_map.read(emptyfinder, header.empty_slots);
+            m_map.read(emptyfinder, emptyfinder.next);
+            
             if(emptyfinder.empty_space != -1){  //if the offset node points to a valid memory location
-                location = emptyfinder.empty_space;
+                location_to_insert = emptyfinder.empty_space;
+                
                 emptyfinder.empty_space = -1;
                 
+                m_map.write(emptyfinder, onebefore.next);
             }
+            onebefore.next = emptyfinder.next;
         }
         
     }
     //if there are no empty spaces
     else{
         //hashes the key to find the proper 'pointer' and checks the hash table to where the new node should go
-        std::hash<std::string> stringhash;
-        BinaryFile::Offset target =  std::abs(static_cast<long>(stringhash(key)))  % numBuckets;
-        m_map.read(location, target);
+        BinaryFile::Offset target =  keyBucketOffset(key);
+        m_map.read(location_to_insert, target);
         
         //figures out where the new node should be inserted (finds the bottom of the appropriate bucket)
-        if(location == -1){      //if this is the first node in the bucket
+        if(location_to_insert == -1){      //if this is the first node in the bucket
             TableHeader gets_end;
             m_map.read(gets_end, 0);
             
-            location = gets_end.end_of_file;
+            location_to_insert = gets_end.end_of_file;
             
             //updates hash table to know where to point
-            m_map.write(location, target);
+            m_map.write(location_to_insert, target);
         }
+        
         else{ //if there's already at least one other node in the bucket
             TableNode gets_last;
             BinaryFile::Offset previous = -1;  //-1 to crash program if previous doesn't get initialized
-            while(location != -1){
-                previous = location;
-                m_map.read(gets_last, location);
-                location = gets_last.next;
+            while(location_to_insert != -1){
+                previous = location_to_insert;
+                m_map.read(gets_last, location_to_insert);
+                location_to_insert = gets_last.next_key;
             }
             
-            location = previous; //'location' points to the location of the last node in the bucket
+            location_to_insert = previous; //'location' points to the location of the last node in the bucket
             
             //updates the 'next' pointer of the last item in the bucket to point at the new node
             //figures out where the new node will be placed
@@ -176,38 +198,51 @@ bool DiskMultiMap::insert(const std::string& key, const std::string& value, cons
             m_map.read(gets_header, 0);
             BinaryFile::Offset end_of_file = gets_header.end_of_file;
             
-            gets_last.next = end_of_file;
-            m_map.write(gets_last, location);
+            gets_last.next_key = end_of_file;
+            m_map.write(gets_last, location_to_insert);
             
             //location-- where the node will eventually be written  
-            location = end_of_file;
+            location_to_insert = end_of_file;
             
         }
 
     }
     
+    //next, adds the node's location to the hash map of values
+    BinaryFile::Offset first_node_with_value = firstValueNode(value);
+    
+    if(first_node_with_value == -1){     //if this is the only node with this value
+        BinaryFile::Offset value_bucket = valueBucketOffset(value);
+        m_map.write(location_to_insert, value_bucket);
+        
+    }
+    
+    
+    else{ //if there are other nodes with this value
+        DiskMultiMap::TableNode gets_end;
+        gets_end.next_value = first_node_with_value;
+        BinaryFile::Offset end = first_node_with_value;
+        
+        //finds the last node
+        while(gets_end.next_value != -1){
+            end = gets_end.next_value;
+            m_map.read(gets_end, gets_end.next_value);
+            
+        }
+        
+        //updates the last node's next_value to point to the node we're about to insert
+        DiskMultiMap::TableNode updatesLastNode;
+        m_map.read(updatesLastNode, end);
+        updatesLastNode.next_value = location_to_insert;
+        
+    }
+    
+    
     //creates the node to insert
     TableNode to_insert;
-    to_insert.next = -1;
+    to_insert.next_key = -1;
+    to_insert.next_value = -1;
     
-    //THIS CODE SHOULDN'T BE NECESSARY, SINCE I REPLACED IT WITH THE CALLS TO STRCPY
-    //makes sure all fields in to_insert are empty before overwriting some of them
-    /*
-    string empty = "";
-    for(int i = 0; i < 120; i++){
-        to_insert.key[i] = to_insert.value[i] = to_insert.context[i]= empty[0];
-    }
-    
-    for(int i = 0; i < key.size(); i++){
-        to_insert.key[i] = key[i];
-    }
-    for(int i = 0; i< value.size(); i++){
-        to_insert.value[i] = value[i];
-    }
-    for(int i = 0; i < context.size(); i++){
-        to_insert.context[i] = context[i];
-    }
-    */
     
     std::strcpy(to_insert.key, key.c_str());
     std::strcpy(to_insert.value, value.c_str());
@@ -215,7 +250,7 @@ bool DiskMultiMap::insert(const std::string& key, const std::string& value, cons
 
     
     //inserts the node (finally) 
-    m_map.write(to_insert, location);
+    m_map.write(to_insert, location_to_insert);
     
     //updates 'end of file' to point to the location after the node you just inserted (don't do this if you're replacing a deleted node)
     m_map.read(header, 0);
@@ -226,55 +261,61 @@ bool DiskMultiMap::insert(const std::string& key, const std::string& value, cons
     return true;
 }
 
+//DOES THE SEARCH FUNCTION NEED TO INCLUDE MATCHES BETWEEN THE KEY ARGUMENT AND VALUES IN THE HASHMAP?
 
 DiskMultiMap::Iterator DiskMultiMap::search(const std::string& key){
     queue<BinaryFile::Offset> iterator_contents;
     
     //finds the proper bucket to check for associated values
-    BinaryFile::Offset location = firstNode(key);
+    BinaryFile::Offset location = firstKeyNode(key);
     //location is now pointing to the first node in the bucket
     
-    //goes through the bucket adding the locations of each node to the iterator's contents
+    //iterates through the bucket adding the locations of each node to the iterator's contents
     TableNode current;
     while(location != -1){
         m_map.read(current, location);
         if(current.key == key)   iterator_contents.push(location);
-        location = current.next;
+        location = current.next_key;
     }
+    
     
     //return an iterator containing those nodes
     return Iterator(iterator_contents, this);
 }
 
 
+//DOES NOT PROPERLY UPDATE KEY-TO-VALUE HASH TABLE
 int DiskMultiMap::erase(const std::string& key, const std::string& value, const std::string& context){
     //finds the bucket to check for associated values
     int numerased = 0;
-    BinaryFile::Offset target = bucketPointer(key);
+    BinaryFile::Offset target = keyBucketOffset(key);
     
     //if there isn't anything in the bucket, return 0
     if(target == -1) return 0;
     
-    BinaryFile::Offset location = firstNode(key);
+    BinaryFile::Offset location = firstKeyNode(key);
     TableNode current;
     TableNode previous;
-    previous.next = -1;
+    
+    previous.next_key = -1;
     BinaryFile::Offset prev_loc = -1;
     
     TableHeader header;
     m_map.read(header, 0);
     
+    
     while(location != -1){
         m_map.read(current, location);
         if( current.key == key && current.value == value && current.context == context){
-            if (previous.next == -1){  //if this is the first node in the bucket
-                //update the 'target' pointer to point to current.next
-                m_map.write(current.next, target);
+            
+            if (previous.next_key == -1){  //if this is the first node in the bucket
+                //makes current.next the first node in the bucket
+                m_map.write(current.next_key, target);
 
             }
             else{
-                //update previous's next pointer to point to current.next
-                previous.next = current.next;
+                //makes the one after current come immediately after previous in the list
+                previous.next_key = current.next_key;
                 m_map.write(previous, prev_loc);
             }
             //add the location of this node to the list of empty spaces
@@ -297,7 +338,7 @@ int DiskMultiMap::erase(const std::string& key, const std::string& value, const 
             
             else{ //if there are other empty slots in the list
                 
-                //ADD: CHECK IF THERE ARE OFFSETNODES POINTING TO -1, IF SO CHANGE THEM TO POINT TO THE NOW-EMPTY NODE
+                //ADD: CHECK IF THERE ARE OFFSETNODES POINTING TO -1, IF SO CHANGE THEM TO POINT TO THE NOW-EMPTY NODE ☑️
                 
                 
                 OffsetNode current;
@@ -327,26 +368,85 @@ int DiskMultiMap::erase(const std::string& key, const std::string& value, const 
         }
         
         previous = current;
-        location = current.next;
-        prev_loc = previous.next;
+        location = current.next_key;
+        prev_loc = previous.next_key;
     }
+    
+    //erases the nodes from the value map
+    target = valueBucketOffset(value);
+    location = firstValueNode(value);
+    
+    current.next_value = location;
+    previous.next_value = -1;
+    
+    while(current.next_value != -1){
+        m_map.read(current, current.next_value);
+        if(current.key == key && current.value == value && current.context == context){
+            
+            if (previous.next_value == -1){  //if this is the first node in the bucket
+                //makes current.next the first node in the bucket
+                m_map.write(current.next_value, target);
+                
+            }
+            else{
+                //makes the one after current
+                previous.next_value = current.next_value;
+                m_map.write(previous, prev_loc);
+            }
+
+            
+        }
+        
+        previous = current;
+        location = current.next_key;
+        prev_loc = previous.next_key;
+
+    }
+    
     
     return numerased;
 }
 
 //returns the location of the first node in the bucket that the key maps to
-BinaryFile::Offset DiskMultiMap::firstNode(const std::string key){
-    BinaryFile::Offset target = bucketPointer(key);
+BinaryFile::Offset DiskMultiMap::firstKeyNode(const std::string key){
+    BinaryFile::Offset target = keyBucketOffset(key);
     BinaryFile::Offset location;
     m_map.read(location, target);
     
     return location;
 }
 
-BinaryFile::Offset DiskMultiMap::bucketPointer(const std::string key){
+//returns the location of the first node in the bucket that the value maps to
+BinaryFile::Offset DiskMultiMap::firstValueNode(const std::string value){
+    BinaryFile::Offset target = valueBucketOffset(value);
+    
+    BinaryFile::Offset location;
+    m_map.read(location, target);
+    
+    return location;
+}
+
+
+//gets the offset of the slot in the hash table associated with the key
+BinaryFile::Offset DiskMultiMap::keyBucketOffset(const std::string key){
     std::hash<std::string> stringhash;
     BinaryFile::Offset target = stringhash(key) % numBuckets;
     
+    DiskMultiMap::TableHeader header;
+    m_map.read(header, 0);
+    target += header.key_map;
+    
+    return target;
+}
+
+//gets the offset of the slots in the hash table associated with the value
+BinaryFile::Offset DiskMultiMap::valueBucketOffset(const std::string value){
+    std::hash<std::string> stringhash;
+    BinaryFile::Offset target = stringhash(value) % numBuckets;
+    
+    DiskMultiMap::TableHeader header;
+    m_map.read(header, 0);
+    target += header.value_map;
     return target;
 }
 

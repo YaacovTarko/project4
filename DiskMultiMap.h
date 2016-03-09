@@ -51,12 +51,14 @@ private:
         char key[121];
         char value[121];
         char context[121];
-        BinaryFile::Offset next; 
+        BinaryFile::Offset next_key;
+        BinaryFile::Offset next_value; 
     };
     
     
     struct TableHeader{
-        BinaryFile::Offset map_start;
+        BinaryFile::Offset key_map;
+        BinaryFile::Offset value_map;
         BinaryFile::Offset empty_slots;
         BinaryFile::Offset end_of_file;
         
@@ -64,7 +66,7 @@ private:
     
     struct OffsetNode{
         BinaryFile::Offset empty_space;
-        BinaryFile::Offset next; 
+        BinaryFile::Offset next;
         
     };
     
@@ -72,10 +74,17 @@ private:
     int numBuckets;
     
     //returns the location of the offset that points to the first node where the key is
-    BinaryFile::Offset bucketPointer(const std::string key);
+    BinaryFile::Offset keyBucketOffset(const std::string key);
     
+    //returns the location of the offset that points to the first node where the value is
+    BinaryFile::Offset valueBucketOffset(const std::string value);
+
     //returns the location of the first node with the key
-    BinaryFile::Offset firstNode(const std::string key);
+    BinaryFile::Offset firstKeyNode(const std::string key);
+    
+    //returns the location of the first node with the value
+    BinaryFile::Offset firstValueNode(const std::string value);
+
 };
 
 #endif // DISKMULTIMAP_H_
