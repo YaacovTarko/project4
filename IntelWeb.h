@@ -24,9 +24,10 @@ public:  //DO NOT MAKE CHANGES
     
 private:
     // Your private member declarations will go here
-    DiskMultiMap file_to_site;
-    DiskMultiMap site_to_file;
-    DiskMultiMap file_to_file; 
+    DiskMultiMap key_to_val;
+    DiskMultiMap val_to_key;
+    
+    DiskMultiMap known_interactions;
 };
 
 #endif // INTELWEB_H_
